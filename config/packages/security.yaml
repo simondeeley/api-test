@@ -1,18 +1,51 @@
 security:
     # https://symfony.com/doc/current/security.html#registering-the-user-hashing-passwords
     password_hashers:
-        Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface: 'auto'
+        #Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface: 'plaintext'
+        Symfony\Component\Ldap\Security\LdapUser: 'plaintext'
     # https://symfony.com/doc/current/security.html#loading-the-user-the-user-provider
+    hide_user_not_found: false
     providers:
-        users_in_memory: { memory: null }
+        jwt:
+            lexik_jwt: ~
+        users_in_memory:
+            memory:
+                users:
+                    test_user: { password: '$3cr3t', roles: ['ROLE_USER', 'ROLE_TEST_USER'] }
+                    test_admin: { password: '$3cr3t', roles: ['ROLE_ADMIN', 'ROLE_TEST_ADMIN'] }
+        users_ldap:
+            ldap:
+                service: Symfony\Component\Ldap\Ldap
+                base_dn: '%env(resolve:LDAP_BASE_DN)%'
+                search_dn: '%env(resolve:LDAP_SEARCH_DN)%'      
+                search_password: '%env(resolve:LDAP_SEARCH_PASSWORD)%'
+                default_roles: ROLE_USER
+                uid_key: uid
+                #extra_fields: ['memberOf']
+        users:
+            chain:
+                providers: ['users_ldap', 'users_in_memory']
     firewalls:
         dev:
             pattern: ^/(_(profiler|wdt)|css|images|js)/
             security: false
+        api:
+            pattern: ^/api/
+            stateless: true
+            provider: jwt
+            jwt: ~
         main:
-            lazy: true
-            provider: users_in_memory
-
+            json_login_ldap:
+                service: Symfony\Component\Ldap\Ldap
+                dn_string: '%env(resolve:LDAP_BASE_DN)%'
+                query_string: 'uid={user_identifier}'
+                search_dn: '%env(resolve:LDAP_SEARCH_DN)%'
+                search_password: '%env(resolve:LDAP_SEARCH_PASSWORD)%'
+                require_previous_session: false
+                check_path: auth
+                success_handler: lexik_jwt_authentication.handler.authentication_success
+                failure_handler: lexik_jwt_authentication.handler.authentication_failure
+            provider: users
             # activate different ways to authenticate
             # https://symfony.com/doc/current/security.html#the-firewall
 
@@ -22,8 +55,10 @@ security:
     # Easy way to control access for large sections of your site
     # Note: Only the *first* access control that matches will be used
     access_control:
-        # - { path: ^/admin, roles: ROLE_ADMIN }
-        # - { path: ^/profile, roles: ROLE_USER }
+        - { path: ^/$, roles: PUBLIC_ACCESS } # Allows accessing the Swagger UI
+        - { path: ^/api, roles: PUBLIC_ACCESS } # Allows accessing the Swagger UI docs
+        - { path: ^/auth/login, roles: PUBLIC_ACCESS }
+        - { path: ^/, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:
     security:
@@ -32,7 +67,7 @@ when@test:
             # important to generate secure password hashes. In tests however, secure hashes
             # are not important, waste resources and increase test times. The following
             # reduces the work factor to the lowest possible values.
-            Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface:
+            Symfony\Component\Ldap\Security\LdapUser:
                 algorithm: auto
                 cost: 4 # Lowest possible value for bcrypt
                 time_cost: 3 # Lowest possible value for argon
